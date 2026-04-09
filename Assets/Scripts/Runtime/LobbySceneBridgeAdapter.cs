@@ -39,7 +39,16 @@ namespace Mimic.Gameplay
 
         private void Start()
         {
+            BindHandlers();
             TrySendInitialRuntimeReady();
+        }
+
+        private void Update()
+        {
+            if (_initialRuntimeReadySent == false)
+            {
+                TrySendInitialRuntimeReady();
+            }
         }
 
         private void OnDestroy()
@@ -69,10 +78,22 @@ namespace Mimic.Gameplay
         private void BindHandlers()
         {
             var bridge = BridgeManager.Instance;
-            _matchHandler = bridge.GetHandler<MatchHandler>("MatchManager");
-            _lobbyChatHandler = bridge.GetHandler<LobbyChatHandler>("LobbyChatManager");
-            _matchHandler?.BindPort(this);
-            _lobbyChatHandler?.BindPort(this);
+            if (bridge == null)
+            {
+                return;
+            }
+
+            if (_matchHandler == null)
+            {
+                _matchHandler = bridge.GetHandler<MatchHandler>("MatchManager");
+                _matchHandler?.BindPort(this);
+            }
+
+            if (_lobbyChatHandler == null)
+            {
+                _lobbyChatHandler = bridge.GetHandler<LobbyChatHandler>("LobbyChatManager");
+                _lobbyChatHandler?.BindPort(this);
+            }
         }
 
         private void UnbindHandlers()
@@ -405,12 +426,19 @@ namespace Mimic.Gameplay
                 sceneName = "LobbyScene";
             }
 
+            Debug.Log($"[LobbySceneBridgeAdapter] Emit RuntimeReady roomId={roomId}, scene={sceneName}");
             _matchHandler.RuntimeReady(roomId, true, sceneName);
         }
 
         private void TrySendInitialRuntimeReady()
         {
-            if (_initialRuntimeReadySent || emitRuntimeReady == false || _matchHandler == null)
+            if (_initialRuntimeReadySent || emitRuntimeReady == false)
+            {
+                return;
+            }
+
+            BindHandlers();
+            if (_matchHandler == null)
             {
                 return;
             }
