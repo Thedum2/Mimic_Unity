@@ -7,13 +7,55 @@ namespace Mimic.Bridge
     {
         public static (string routeName, string action) ParseRoute(string route)
         {
-            if (string.IsNullOrEmpty(route))
+            if (string.IsNullOrWhiteSpace(route))
             {
                 return (string.Empty, string.Empty);
             }
 
-            var parts = route.Split('_', 2);
-            return parts.Length >= 2 ? (parts[0], parts[1]) : (route, string.Empty);
+            var normalizedRoute = route.Trim();
+            const string bridgeRoutePrefix = "BridgeManager_";
+            if (normalizedRoute.StartsWith(bridgeRoutePrefix, StringComparison.Ordinal))
+            {
+                normalizedRoute = normalizedRoute[bridgeRoutePrefix.Length..];
+            }
+
+            var parts = normalizedRoute.Split('_', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0)
+            {
+                return (string.Empty, string.Empty);
+            }
+
+            var index = 0;
+            if (parts[index] is "R2U" or "U2R")
+            {
+                index++;
+            }
+
+            if (index >= parts.Length)
+            {
+                return (string.Empty, string.Empty);
+            }
+
+            var manager = parts[index];
+            index++;
+
+            if (index >= parts.Length)
+            {
+                return (manager, string.Empty);
+            }
+
+            var action = string.Join("_", parts[index..]);
+            var suffixIndex = action.LastIndexOf('_');
+            if (suffixIndex > 0)
+            {
+                var tail = action[(suffixIndex + 1)..];
+                if (tail is "REQ" or "ACK" or "NTY")
+                {
+                    action = action[..suffixIndex];
+                }
+            }
+
+            return (manager, action);
         }
 
         public static bool TryTo<T>(object raw, out T model, out string error)

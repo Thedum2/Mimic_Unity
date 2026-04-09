@@ -617,23 +617,21 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 97cec083d69666141a31c5bdf45f5e57, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  hostPlayerId: player_001
-  hostPlayerName: Host
+  playerId: player_001
   roomCode: A1B2C
   maxPlayerCount: 5
   region: KR
   isPrivate: 1
-  joinPlayerId: player_002
-  joinPlayerName: Guest
+  hostPlayerName: Host
   inviteCode: A1B2C
-  rejoinPlayerId: player_001
   rejoinRoomId: room_player_001
   rejoinSessionId: room_player_001
   chatRoomId: 
-  senderPlayerId: player_001
   senderDisplayName: Host
   messageText: Hello lobby
   clientMessageId: client_msg_001
+  mathA: 3
+  mathB: 2
 --- !u!4 &1903925062
 Transform:
   m_ObjectHideFlags: 0
@@ -641,6 +639,53 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1903925060}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: -1.319457, y: 0.8758355, z: 1.9437388}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &2026415484
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 2026415486}
+  - component: {fileID: 2026415485}
+  m_Layer: 0
+  m_Name: ReactBridge
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &2026415485
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2026415484}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: dd631c27c013ce24786a963ec829a218, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  unparentOnAwake: 1
+  defaultTimeoutSeconds: 5
+  bridgeGameObjectName: ReactBridge
+--- !u!4 &2026415486
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2026415484}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: -1.319457, y: 0.8758355, z: 1.9437388}
@@ -660,3 +705,4 @@ SceneRoots:
   - {fileID: 300000006}
   - {fileID: 1903925062}
   - {fileID: 827310632}
+  - {fileID: 2026415486}

@@ -46,6 +46,12 @@ namespace Mimic.Bridge.Model
                 [JsonProperty("messageText")] public string MessageText { get; set; }
                 [JsonProperty("clientMessageId")] public string ClientMessageId { get; set; }
             }
+
+            public class MathAdd
+            {
+                [JsonProperty("a")] public int A { get; set; }
+                [JsonProperty("b")] public int B { get; set; }
+            }
         }
     }
 }

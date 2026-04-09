@@ -27,24 +27,6 @@ namespace Mimic.Bridge
             NTY("MessageReceived", new Notify.U2R.LobbyChatManagerMessageReceived(roomId, message));
         }
 
-        public void HistoryUpdated(string roomId, System.Collections.Generic.List<Notify.U2R.LobbyChatManagerMessage> messages)
-        {
-            NTY("HistoryUpdated", new Notify.U2R.LobbyChatManagerHistoryUpdated(roomId, messages));
-        }
-
-        public void SystemMessage(
-            string roomId,
-            string eventType,
-            string targetPlayerId,
-            string targetDisplayName,
-            string messageText,
-            string createdAt)
-        {
-            NTY(
-                "SystemMessage",
-                new Notify.U2R.LobbyChatManagerSystemMessage(roomId, eventType, targetPlayerId, targetDisplayName, messageText, createdAt));
-        }
-
         public override void HandleRequest(Message message, Action<AcknowledgeResponse> onSuccess, Action<string> onError)
         {
             var (_, action) = Util.ParseRoute(message.route);
