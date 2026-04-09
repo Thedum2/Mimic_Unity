@@ -622,16 +622,14 @@ MonoBehaviour:
   maxPlayerCount: 5
   region: KR
   isPrivate: 1
-  hostPlayerName: Host
+  hostPlayerNickname: Host
   inviteCode: A1B2C
   rejoinRoomId: room_player_001
   rejoinSessionId: room_player_001
-  chatRoomId: 
-  senderDisplayName: Host
+  chatRoomId: A1B2C
+  senderPlayerNickname: Host
   messageText: Hello lobby
   clientMessageId: client_msg_001
-  mathA: 3
-  mathB: 2
 --- !u!4 &1903925062
 Transform:
   m_ObjectHideFlags: 0
