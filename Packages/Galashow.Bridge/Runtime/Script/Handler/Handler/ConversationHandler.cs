@@ -23,7 +23,7 @@ namespace Mimic.Bridge
             }
         }
 
-        public void OpenConversation(string conversationId, List<Notify.U2R.ConversationParticipant> participants, List<string> observerPlayerIds, string status)
+        public void OpenConversation(string conversationId, List<PlayerBase> participants, List<string> observerPlayerIds, string status)
         {
             NTY("OpenConversation", new Notify.U2R.ConversationManagerOpenConversation(conversationId, participants, observerPlayerIds, status));
         }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Threading.Tasks;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using Fusion;
 using Fusion.Sockets;
 using Mimic.Gameplay.Network.Spawn;
@@ -27,7 +28,8 @@ namespace Mimic.Gameplay
         private INetworkObjectProvider _objectProvider;
         private bool _started;
         private bool _isStarting;
-        private Task<bool> _pendingStart;
+        private bool _hasPendingStart;
+        private UniTask<bool> _pendingStart;
         private string _requestedRoomName;
 
         public string RoomName => roomName;
@@ -37,7 +39,7 @@ namespace Mimic.Gameplay
         {
             if (autoStartOnAwake)
             {
-                _ = StartOrJoinSessionAsync();
+                StartOrJoinSessionAsync(cancellationToken: this.GetCancellationTokenOnDestroy()).Forget();
             }
         }
 
@@ -71,11 +73,18 @@ namespace Mimic.Gameplay
             }
         }
 
-        public Task<bool> StartOrJoinSessionAsync(string sessionName = null, GameMode? gameModeOverride = null, NetworkObject playerPrefabOverride = null)
+        public UniTask<bool> StartOrJoinSessionAsync(
+            string sessionName = null,
+            GameMode? gameModeOverride = null,
+            NetworkObject playerPrefabOverride = null,
+            bool allowSessionCreation = true,
+            CancellationToken cancellationToken = default)
         {
             Configure(sessionName, playerPrefabOverride, gameModeOverride);
+            var destroyToken = this.GetCancellationTokenOnDestroy();
+            var effectiveToken = cancellationToken.CanBeCanceled ? cancellationToken : destroyToken;
 
-            if (_pendingStart != null)
+            if (_hasPendingStart)
             {
                 return _pendingStart;
             }
@@ -83,7 +92,7 @@ namespace Mimic.Gameplay
             if (string.IsNullOrWhiteSpace(roomName))
             {
                 Debug.LogError("VillagePlayerSpawner: roomName is required.");
-                return Task.FromResult(false);
+                return UniTask.FromResult(false);
             }
 
             if (_started)
@@ -93,19 +102,20 @@ namespace Mimic.Gameplay
                 {
                     if (_isStarting)
                     {
-                        return _pendingStart ?? Task.FromResult(false);
+                        return _hasPendingStart ? _pendingStart : UniTask.FromResult(false);
                     }
 
-                    return Task.FromResult(true);
+                    return UniTask.FromResult(true);
                 }
 
                 if (_isStarting)
                 {
-                    return _pendingStart ?? Task.FromResult(false);
+                    return _hasPendingStart ? _pendingStart : UniTask.FromResult(false);
                 }
             }
 
-            _pendingStart = StartOrJoinSessionInternalAsync();
+            _pendingStart = StartOrJoinSessionInternalAsync(allowSessionCreation, effectiveToken).Preserve();
+            _hasPendingStart = true;
             return _pendingStart;
         }
 
@@ -119,7 +129,7 @@ namespace Mimic.Gameplay
             roomName = targetRoomName;
         }
 
-        private async Task<bool> StartOrJoinSessionInternalAsync()
+        private async UniTask<bool> StartOrJoinSessionInternalAsync(bool allowSessionCreation, CancellationToken cancellationToken)
         {
             if (_isStarting)
             {
@@ -140,7 +150,7 @@ namespace Mimic.Gameplay
                     _requestedRoomName = null;
                     _started = false;
                     runner.Shutdown();
-                    await AwaitRunnerShutdownAsync();
+                    await AwaitRunnerShutdownAsync(cancellationToken);
                     if (runner.IsRunning)
                     {
                         Debug.LogWarning(
@@ -167,30 +177,41 @@ namespace Mimic.Gameplay
                 {
                     GameMode = gameMode,
                     SessionName = roomName,
+                    EnableClientSessionCreation = allowSessionCreation,
                     Scene = new NetworkSceneInfo(),
                     SceneManager = _sceneManager,
                     ObjectProvider = _objectProvider
                 });
                 var timeoutSeconds = Mathf.Max(1f, startSessionTimeoutSeconds);
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
-                var completedTask = await Task.WhenAny(startTask, timeoutTask);
-                if (completedTask != startTask)
+                StartGameResult result;
+                using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
                 {
-                    Debug.LogError(
-                        $"VillagePlayerSpawner: StartGame timed out after {timeoutSeconds:0.0}s for room '{roomName}'.");
-                    if (runner != null && runner.IsRunning)
+                    timeoutCts.CancelAfterSlim(TimeSpan.FromSeconds(timeoutSeconds));
+                    try
                     {
-                        runner.Shutdown();
-                        await AwaitRunnerShutdownAsync();
+                        result = await startTask.AsUniTask().AttachExternalCancellation(timeoutCts.Token);
                     }
+                    catch (OperationCanceledException)
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            return false;
+                        }
 
-                    return false;
+                        Debug.LogError(
+                            $"VillagePlayerSpawner: StartGame timed out after {timeoutSeconds:0.0}s for room '{roomName}'.");
+                        if (runner != null && runner.IsRunning)
+                        {
+                            runner.Shutdown();
+                            await AwaitRunnerShutdownAsync(cancellationToken);
+                        }
+
+                        return false;
+                    }
                 }
 
-                var result = await startTask;
                 _requestedRoomName = roomName;
                 _started = true;
-                _pendingStart = null;
                 return result.Ok;
             }
             catch (Exception exception)
@@ -201,19 +222,22 @@ namespace Mimic.Gameplay
             finally
             {
                 _isStarting = false;
-                if (_pendingStart == null || _pendingStart.IsCompleted)
-                {
-                    _pendingStart = null;
-                }
+                _hasPendingStart = false;
+                _pendingStart = default;
             }
         }
 
-        private async Task AwaitRunnerShutdownAsync()
+        private async UniTask AwaitRunnerShutdownAsync(CancellationToken cancellationToken)
         {
             var timeout = DateTime.UtcNow.AddSeconds(2.5);
             while (runner != null && runner.IsRunning && DateTime.UtcNow < timeout)
             {
-                await Task.Delay(50);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                await UniTask.Delay(50, cancellationToken: cancellationToken);
             }
         }
 
@@ -305,11 +329,15 @@ namespace Mimic.Gameplay
                 return false;
             }
 
-            // In shared mode, only the shared master can spawn every player.
-            // Non-master clients still need to spawn their own avatar so input authority can be assigned locally.
-            return runningRunner.IsServer
-                || runningRunner.IsSharedModeMasterClient
-                || runningRunner.LocalPlayer == player;
+            // In Shared mode, each client should spawn only its own avatar.
+            // Letting both shared master and local peer spawn the same player can produce duplicates.
+            if (runningRunner.GameMode == GameMode.Shared)
+            {
+                return runningRunner.LocalPlayer == player;
+            }
+
+            // In host/server style modes, the server is authoritative for player spawning.
+            return runningRunner.IsServer;
         }
 
         private void ResolveSpawnPointsIfNeeded()

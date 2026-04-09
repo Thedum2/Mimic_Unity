@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Fusion;
@@ -12,6 +13,7 @@ namespace Mimic.Gameplay
     public sealed class VillagePlayerSync : NetworkBehaviour
     {
         public static VillagePlayerSync LocalPlayer { get; private set; }
+        public static event Action<LobbyChatNetworkMessage> OnLobbyChatNetworkMessage;
 
         [SerializeField] private bool isLocalPlayer;
         [SerializeField] private string playerId = "player_01";
@@ -72,6 +74,7 @@ namespace Mimic.Gameplay
         {
             Register();
             ApplyAuthorityMode();
+            EnsureNicknameBillboard();
         }
 
         private void OnDisable()
@@ -486,7 +489,7 @@ namespace Mimic.Gameplay
             return new SnapshotInfo
             {
                 PlayerId = ResolvePlayerId(),
-                DisplayName = gameObject.name,
+                DisplayName = DisplayName,
                 IsLocalPlayer = IsLocalPlayer,
                 IsMoving = isMoving,
                 Speed = speed,
@@ -506,6 +509,20 @@ namespace Mimic.Gameplay
                 ? ResolvePlayerId()
                 : newPlayerId;
             Register();
+            EnsureNicknameBillboard();
+        }
+
+        public string DisplayName
+        {
+            get
+            {
+                if (!string.IsNullOrWhiteSpace(playerId) && playerId != "player_01")
+                {
+                    return playerId;
+                }
+
+                return string.IsNullOrWhiteSpace(gameObject.name) ? ResolvePlayerId() : gameObject.name;
+            }
         }
 
         public void ApplySpawnState(Vector3 position, Quaternion rotation, float updateTime, float speed = 0f, Vector3? forward = null)
@@ -603,10 +620,94 @@ namespace Mimic.Gameplay
             NetworkUpdateTime = sequence;
         }
 
+        public void PublishLobbyChat(
+            string roomId,
+            string senderPlayerId,
+            string senderPlayerNickname,
+            string messageText,
+            string messageId,
+            string createdAt)
+        {
+            roomId ??= string.Empty;
+            senderPlayerId ??= string.Empty;
+            senderPlayerNickname ??= string.Empty;
+            messageText ??= string.Empty;
+            messageId ??= string.Empty;
+            createdAt ??= string.Empty;
+
+            if (!IsNetworkRunning || Object == null)
+            {
+                DispatchLobbyChat(new LobbyChatNetworkMessage(
+                    roomId,
+                    senderPlayerId,
+                    senderPlayerNickname,
+                    messageText,
+                    messageId,
+                    createdAt));
+                return;
+            }
+
+            if (HasStateAuthority)
+            {
+                RpcBroadcastLobbyChat(roomId, senderPlayerId, senderPlayerNickname, messageText, messageId, createdAt);
+                return;
+            }
+
+            if (HasInputAuthority)
+            {
+                RpcSubmitLobbyChatToState(roomId, senderPlayerId, senderPlayerNickname, messageText, messageId, createdAt);
+                return;
+            }
+
+            // Fallback for unexpected authority states.
+            DispatchLobbyChat(new LobbyChatNetworkMessage(
+                roomId,
+                senderPlayerId,
+                senderPlayerNickname,
+                messageText,
+                messageId,
+                createdAt));
+        }
+
         [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority, InvokeLocal = false, Channel = RpcChannel.Unreliable)]
         private void RpcPublishLocalSnapshot(Vector3 position, Vector3 forward, float speed, float sequence)
         {
             ApplyNetworkSnapshot(position, forward, speed, sequence);
+        }
+
+        [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority, InvokeLocal = false, Channel = RpcChannel.Reliable)]
+        private void RpcSubmitLobbyChatToState(
+            string roomId,
+            string senderPlayerId,
+            string senderPlayerNickname,
+            string messageText,
+            string messageId,
+            string createdAt)
+        {
+            RpcBroadcastLobbyChat(roomId, senderPlayerId, senderPlayerNickname, messageText, messageId, createdAt);
+        }
+
+        [Rpc(RpcSources.StateAuthority, RpcTargets.All, InvokeLocal = true, Channel = RpcChannel.Reliable)]
+        private void RpcBroadcastLobbyChat(
+            string roomId,
+            string senderPlayerId,
+            string senderPlayerNickname,
+            string messageText,
+            string messageId,
+            string createdAt)
+        {
+            DispatchLobbyChat(new LobbyChatNetworkMessage(
+                roomId,
+                senderPlayerId,
+                senderPlayerNickname,
+                messageText,
+                messageId,
+                createdAt));
+        }
+
+        private static void DispatchLobbyChat(LobbyChatNetworkMessage message)
+        {
+            OnLobbyChatNetworkMessage?.Invoke(message);
         }
 
         private static Quaternion GetForwardLookRotation(Quaternion fallbackRotation, Vector3 forward)
@@ -630,6 +731,32 @@ namespace Mimic.Gameplay
             public float Speed { get; set; }
             public Vector3 Position { get; set; }
             public Vector3 Forward { get; set; }
+        }
+
+        public readonly struct LobbyChatNetworkMessage
+        {
+            public readonly string RoomId;
+            public readonly string SenderPlayerId;
+            public readonly string SenderPlayerNickname;
+            public readonly string MessageText;
+            public readonly string MessageId;
+            public readonly string CreatedAt;
+
+            public LobbyChatNetworkMessage(
+                string roomId,
+                string senderPlayerId,
+                string senderPlayerNickname,
+                string messageText,
+                string messageId,
+                string createdAt)
+            {
+                RoomId = roomId;
+                SenderPlayerId = senderPlayerId;
+                SenderPlayerNickname = senderPlayerNickname;
+                MessageText = messageText;
+                MessageId = messageId;
+                CreatedAt = createdAt;
+            }
         }
 
         private void RefreshLocalPlayerCache()
@@ -665,6 +792,14 @@ namespace Mimic.Gameplay
             if (inputAuthorityPlayer != null)
             {
                 LocalPlayer = inputAuthorityPlayer;
+            }
+        }
+
+        private void EnsureNicknameBillboard()
+        {
+            if (GetComponent<VillagePlayerNameBillboard>() == null)
+            {
+                gameObject.AddComponent<VillagePlayerNameBillboard>();
             }
         }
 

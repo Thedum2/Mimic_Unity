@@ -8,7 +8,7 @@ namespace Mimic.Gameplay.Lobby
     {
         private readonly Dictionary<string, string> _inviteToRoomId = new();
         private readonly Dictionary<string, RoomState> _roomStates = new();
-        private readonly Dictionary<string, List<Notify.U2R.LobbyChatManagerMessage>> _messageHistoryByRoom = new();
+        private readonly Dictionary<string, List<ChatMessage>> _messageHistoryByRoom = new();
         private readonly HashSet<string> _runtimeReadyRooms = new();
         private readonly int _maxMessageHistory;
 
@@ -22,6 +22,7 @@ namespace Mimic.Gameplay.Lobby
             string inviteCode,
             int maxPlayerCount,
             string hostPlayerId,
+            string hostPlayerNickname,
             out RoomState roomState)
         {
             roomState = null;
@@ -35,9 +36,14 @@ namespace Mimic.Gameplay.Lobby
                 return false;
             }
 
-            roomState = GetOrCreateRoom(roomId, inviteCode, maxPlayerCount, hostPlayerId);
+            roomState = GetOrCreateRoom(roomId, inviteCode, maxPlayerCount, hostPlayerId, hostPlayerNickname);
             _inviteToRoomId[inviteCode] = roomId;
             return true;
+        }
+
+        public bool HasRoom(string roomId)
+        {
+            return string.IsNullOrWhiteSpace(roomId) == false && _roomStates.ContainsKey(roomId);
         }
 
         public string ResolveRoomId(string inviteCode, string fallbackInviteCode)
@@ -60,44 +66,59 @@ namespace Mimic.Gameplay.Lobby
             return true;
         }
 
-        public RoomState GetOrCreateRoom(string roomId, string inviteCode, int maxPlayerCount, string hostPlayerId = null)
+        public RoomState GetOrCreateRoom(
+            string roomId,
+            string inviteCode,
+            int maxPlayerCount,
+            string hostPlayerId = null,
+            string hostPlayerNickname = null)
         {
             if (_roomStates.TryGetValue(roomId, out var roomState))
             {
                 return roomState;
             }
 
-            roomState = new RoomState(roomId, inviteCode, maxPlayerCount, hostPlayerId);
+            roomState = new RoomState(roomId, inviteCode, maxPlayerCount, hostPlayerId, hostPlayerNickname);
             _roomStates[roomId] = roomState;
             if (_messageHistoryByRoom.ContainsKey(roomId) == false)
             {
-                _messageHistoryByRoom[roomId] = new List<Notify.U2R.LobbyChatManagerMessage>();
+                _messageHistoryByRoom[roomId] = new List<ChatMessage>();
             }
 
             return roomState;
         }
 
-        public void MarkJoined(string roomId, string playerId)
+        public void MarkJoined(string roomId, string playerId, string playerNickname = null)
         {
             if (_roomStates.TryGetValue(roomId, out var roomState))
             {
-                roomState.MarkJoined(playerId);
+                roomState.MarkJoined(playerId, playerNickname);
             }
         }
 
-        public List<Notify.U2R.LobbyChatManagerMessage> GetOrCreateHistory(string roomId)
+        public List<PlayerBase> GetParticipantsSnapshot(string roomId)
+        {
+            if (_roomStates.TryGetValue(roomId, out var roomState) == false)
+            {
+                return new List<PlayerBase>();
+            }
+
+            return roomState.GetParticipantsSnapshot();
+        }
+
+        public List<ChatMessage> GetOrCreateHistory(string roomId)
         {
             if (_messageHistoryByRoom.TryGetValue(roomId, out var history))
             {
                 return history;
             }
 
-            var created = new List<Notify.U2R.LobbyChatManagerMessage>();
+            var created = new List<ChatMessage>();
             _messageHistoryByRoom[roomId] = created;
             return created;
         }
 
-        public void TrimHistory(List<Notify.U2R.LobbyChatManagerMessage> history)
+        public void TrimHistory(List<ChatMessage> history)
         {
             if (_maxMessageHistory <= 0 || history.Count <= _maxMessageHistory)
             {
@@ -150,13 +171,19 @@ namespace Mimic.Gameplay.Lobby
     internal sealed class RoomState
     {
         private readonly HashSet<string> _joinedPlayerIds = new();
+        private readonly Dictionary<string, PlayerBase> _participantsByPlayerId = new();
 
         public string RoomId { get; }
         public string InviteCode { get; }
         public int MaxPlayerCount { get; }
         public int JoinedPlayerCount => _joinedPlayerIds.Count;
 
-        public RoomState(string roomId, string inviteCode, int maxPlayerCount, string hostPlayerId)
+        public RoomState(
+            string roomId,
+            string inviteCode,
+            int maxPlayerCount,
+            string hostPlayerId,
+            string hostPlayerNickname)
         {
             RoomId = roomId;
             InviteCode = inviteCode;
@@ -164,7 +191,7 @@ namespace Mimic.Gameplay.Lobby
 
             if (string.IsNullOrWhiteSpace(hostPlayerId) == false)
             {
-                _joinedPlayerIds.Add(hostPlayerId);
+                MarkJoined(hostPlayerId, hostPlayerNickname, true);
             }
         }
 
@@ -178,7 +205,7 @@ namespace Mimic.Gameplay.Lobby
             return _joinedPlayerIds.Count < MaxPlayerCount;
         }
 
-        public void MarkJoined(string playerId)
+        public void MarkJoined(string playerId, string playerNickname = null, bool isHost = false)
         {
             if (string.IsNullOrWhiteSpace(playerId))
             {
@@ -186,6 +213,24 @@ namespace Mimic.Gameplay.Lobby
             }
 
             _joinedPlayerIds.Add(playerId);
+            var normalizedName = string.IsNullOrWhiteSpace(playerNickname) ? playerId : playerNickname.Trim();
+
+            if (_participantsByPlayerId.TryGetValue(playerId, out var existing))
+            {
+                existing.PlayerNickname = normalizedName;
+                existing.IsHost = existing.IsHost || isHost;
+                return;
+            }
+
+            _participantsByPlayerId[playerId] = new PlayerBase(
+                playerId,
+                normalizedName,
+                isHost);
+        }
+
+        public List<PlayerBase> GetParticipantsSnapshot()
+        {
+            return new List<PlayerBase>(_participantsByPlayerId.Values);
         }
     }
 }

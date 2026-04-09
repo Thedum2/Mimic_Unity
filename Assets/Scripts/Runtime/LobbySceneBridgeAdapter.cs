@@ -1,5 +1,6 @@
 using System;
 using System.Text.RegularExpressions;
+using Cysharp.Threading.Tasks;
 using Fusion;
 using Mimic.Bridge;
 using Mimic.Bridge.Model;
@@ -10,7 +11,7 @@ using UnityEngine.SceneManagement;
 namespace Mimic.Gameplay
 {
     [DisallowMultipleComponent]
-    public sealed class LobbySceneBridgeAdapter : MonoBehaviour, IMatchPort, ILobbyChatPort, IMathPort
+    public sealed class LobbySceneBridgeAdapter : MonoBehaviour, IMatchPort, ILobbyChatPort
     {
         private const int DefaultMaxMessageHistory = 60;
         private static readonly Regex InviteCodePattern = new("^[A-Z0-9]{5}$", RegexOptions.Compiled);
@@ -23,7 +24,6 @@ namespace Mimic.Gameplay
 
         private MatchHandler _matchHandler;
         private LobbyChatHandler _lobbyChatHandler;
-        private MathHandler _mathHandler;
         private LobbyRoomContext _roomContext;
         private string _currentRoomId;
         private bool _initialRuntimeReadySent;
@@ -34,6 +34,7 @@ namespace Mimic.Gameplay
             EnsurePlayerSpawner();
             ResolvePrefab();
             BindHandlers();
+            VillagePlayerSync.OnLobbyChatNetworkMessage += HandleNetworkLobbyChatMessage;
         }
 
         private void Start()
@@ -43,6 +44,7 @@ namespace Mimic.Gameplay
 
         private void OnDestroy()
         {
+            VillagePlayerSync.OnLobbyChatNetworkMessage -= HandleNetworkLobbyChatMessage;
             UnbindHandlers();
         }
 
@@ -69,17 +71,14 @@ namespace Mimic.Gameplay
             var bridge = BridgeManager.Instance;
             _matchHandler = bridge.GetHandler<MatchHandler>("MatchManager");
             _lobbyChatHandler = bridge.GetHandler<LobbyChatHandler>("LobbyChatManager");
-            _mathHandler = bridge.GetHandler<MathHandler>("MathManager");
             _matchHandler?.BindPort(this);
             _lobbyChatHandler?.BindPort(this);
-            _mathHandler?.BindPort(this);
         }
 
         private void UnbindHandlers()
         {
             _matchHandler?.ClearPort(this);
             _lobbyChatHandler?.ClearPort(this);
-            _mathHandler?.ClearPort(this);
         }
 
         public void R2U_MatchManager_CreateRoom_REQ(
@@ -87,37 +86,45 @@ namespace Mimic.Gameplay
             Action<Acknowledge.U2R.MatchManagerCreateRoom> onSuccess,
             Action<string> onError)
         {
-            var safeHost = string.IsNullOrWhiteSpace(data?.HostPlayerId) ? "host" : data.HostPlayerId;
+            var hostPlayerId = data?.HostPlayer?.PlayerId;
+            var safeHostId = string.IsNullOrWhiteSpace(hostPlayerId) ? "host" : hostPlayerId;
+            var safeHostNickname = string.IsNullOrWhiteSpace(data?.HostPlayer?.PlayerNickname)
+                ? safeHostId
+                : data.HostPlayer.PlayerNickname.Trim();
             var roomCode = NormalizeRoomCode(data?.RoomCode);
-            Debug.Log($"[LobbySceneBridgeAdapter] Handle CreateRoom hostPlayerId={safeHost} roomCode={roomCode}");
+            Debug.Log($"[LobbySceneBridgeAdapter] Handle CreateRoom hostPlayerId={safeHostId} roomCode={roomCode}");
 
             if (playerSpawner == null)
             {
                 Debug.LogWarning("[LobbySceneBridgeAdapter] CreateRoom failed: PlayerSpawner is missing in LobbyScene.");
-                onError?.Invoke("PlayerSpawner is missing in LobbyScene.");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "PlayerSpawner is missing in LobbyScene.", true));
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(roomCode))
             {
                 Debug.LogWarning("[LobbySceneBridgeAdapter] CreateRoom failed: roomCode is required.");
-                onError?.Invoke("roomCode is required.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "roomCode is required.", false));
                 return;
             }
 
             if (IsValidInviteCode(roomCode) == false)
             {
                 Debug.LogWarning($"[LobbySceneBridgeAdapter] CreateRoom failed: invalid roomCode={roomCode}");
-                onError?.Invoke("roomCode must be 5 uppercase letters or digits.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "roomCode must be 5 uppercase letters or digits.", false));
                 return;
             }
 
             var maxPlayerCount = Mathf.Max(1, data.MaxPlayerCount);
 
-            if (_roomContext.TryRegisterRoom(roomCode, roomCode, maxPlayerCount, safeHost, out _) == false)
+            if (_roomContext.TryRegisterRoom(roomCode, roomCode, maxPlayerCount, safeHostId, safeHostNickname, out var roomState) == false)
             {
                 Debug.LogWarning($"[LobbySceneBridgeAdapter] CreateRoom failed: duplicate roomCode={roomCode}");
-                onError?.Invoke("A room with the same roomCode already exists.");
+                onError?.Invoke(Util.ToBridgeError(
+                    "INVALID_ARGUMENT",
+                    "A room with the same roomCode already exists.",
+                    false,
+                    new { roomCode }));
                 return;
             }
 
@@ -127,17 +134,23 @@ namespace Mimic.Gameplay
 
             StartRoomAsync(
                 roomId,
+                allowSessionCreation: true,
                 started =>
                 {
                     if (started)
                     {
                         Debug.Log($"[LobbySceneBridgeAdapter] CreateRoom success roomId={roomId} inviteCode={inviteCode}");
-                        onSuccess?.Invoke(new Acknowledge.U2R.MatchManagerCreateRoom(true, roomId, inviteCode));
+                        onSuccess?.Invoke(new Acknowledge.U2R.MatchManagerCreateRoom(
+                            true,
+                            roomId,
+                            inviteCode,
+                            roomState.JoinedPlayerCount,
+                            _roomContext.GetParticipantsSnapshot(roomId)));
                         return;
                     }
 
                     Debug.LogWarning($"[LobbySceneBridgeAdapter] CreateRoom failed to start session roomId={roomId}");
-                    onError?.Invoke($"Failed to create session '{roomId}'.");
+                    // StartRoomInternalAsync already reports error via onError.
                 },
                 onError: onError);
         }
@@ -148,23 +161,26 @@ namespace Mimic.Gameplay
             Action<string> onError)
         {
             var inviteCode = NormalizeInviteCode(data?.InviteCode);
-            var playerId = string.IsNullOrWhiteSpace(data?.PlayerId) ? null : data.PlayerId.Trim();
+            var playerId = string.IsNullOrWhiteSpace(data?.Player?.PlayerId) ? null : data.Player.PlayerId.Trim();
+            var playerNickname = string.IsNullOrWhiteSpace(data?.Player?.PlayerNickname)
+                ? playerId
+                : data.Player.PlayerNickname.Trim();
             if (string.IsNullOrWhiteSpace(inviteCode))
             {
-                onError?.Invoke("InviteCode is required.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "InviteCode is required.", false));
                 return;
             }
 
             if (IsValidInviteCode(inviteCode) == false)
             {
                 Debug.LogWarning($"[LobbySceneBridgeAdapter] JoinRoom rejected: invalid inviteCode={inviteCode}");
-                onError?.Invoke("Invite code must be 5 uppercase letters or digits.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "Invite code must be 5 uppercase letters or digits.", false));
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(playerId))
             {
-                onError?.Invoke("playerId is required.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "playerId is required.", false));
                 return;
             }
 
@@ -177,25 +193,34 @@ namespace Mimic.Gameplay
             if (_roomContext.CanJoin(targetRoomId, playerId) == false)
             {
                 Debug.LogWarning($"[LobbySceneBridgeAdapter] JoinRoom rejected: room full roomId={targetRoomId} playerId={playerId}");
-                onError?.Invoke("Room is full.");
+                onError?.Invoke(Util.ToBridgeError(
+                    "ROOM_FULL",
+                    "Room is full.",
+                    false,
+                    new { roomId = targetRoomId }));
                 return;
             }
 
             _currentRoomId = targetRoomId;
             StartRoomAsync(
                 targetRoomId,
+                allowSessionCreation: false,
                 onSuccess: started =>
                 {
-                if (started)
-                {
-                    var roomState = _roomContext.GetOrCreateRoom(targetRoomId, inviteCode, int.MaxValue, null);
-                    roomState.MarkJoined(playerId);
-                    onSuccess?.Invoke(new Acknowledge.U2R.MatchManagerJoinRoomByInviteCode(true, targetRoomId, roomState.JoinedPlayerCount));
-                    return;
-                }
+                    if (started)
+                    {
+                        var roomState = _roomContext.GetOrCreateRoom(targetRoomId, inviteCode, int.MaxValue, null);
+                        roomState.MarkJoined(playerId, playerNickname);
+                        onSuccess?.Invoke(new Acknowledge.U2R.MatchManagerJoinRoomByInviteCode(
+                            true,
+                            targetRoomId,
+                            roomState.JoinedPlayerCount,
+                            _roomContext.GetParticipantsSnapshot(targetRoomId)));
+                        return;
+                    }
 
                     Debug.LogWarning($"[LobbySceneBridgeAdapter] JoinRoom failed to start session roomId={targetRoomId} playerId={playerId}");
-                    onError?.Invoke($"Failed to join session '{targetRoomId}'.");
+                    // StartRoomInternalAsync already reports error via onError.
                 },
                 onError: onError);
         }
@@ -208,13 +233,14 @@ namespace Mimic.Gameplay
             var roomId = ResolveRoomIdFromRequest(data);
             if (string.IsNullOrWhiteSpace(roomId))
             {
-                onError?.Invoke("RoomId is required.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "RoomId is required.", false));
                 return;
             }
 
             _currentRoomId = roomId;
             StartRoomAsync(
                 roomId,
+                allowSessionCreation: false,
                 onSuccess: started =>
                 {
                     if (started)
@@ -223,7 +249,7 @@ namespace Mimic.Gameplay
                         return;
                     }
 
-                    onError?.Invoke($"Failed to rejoin session '{roomId}'.");
+                    // StartRoomInternalAsync already reports error via onError.
                 },
                 onError: onError);
         }
@@ -236,81 +262,97 @@ namespace Mimic.Gameplay
             var roomId = ResolveMessageRoom(data?.RoomId);
             if (string.IsNullOrWhiteSpace(roomId))
             {
-                onError?.Invoke("No room id specified.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "No room id specified.", false));
                 return;
             }
 
             if (playerSpawner == null)
             {
-                onError?.Invoke("PlayerSpawner is missing in LobbyScene.");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "PlayerSpawner is missing in LobbyScene.", true));
                 return;
             }
 
             if (playerSpawner.IsStarted == false)
             {
-                onError?.Invoke("Lobby room is not initialized yet. Create or join room first.");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "Lobby room is not initialized yet. Create or join room first.", true));
                 return;
             }
 
             if (IsRoomRuntimeReady(roomId) == false)
             {
-                onError?.Invoke("RuntimeReady was not emitted for this room yet.");
+                onError?.Invoke(Util.ToBridgeError("RUNTIME_NOT_READY", "RuntimeReady was not emitted for this room yet.", true));
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(data.SenderPlayerId) || string.IsNullOrWhiteSpace(data.MessageText))
+            if (data?.Sender == null || data?.Message == null)
             {
-                onError?.Invoke("senderPlayerId and messageText are required.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "sender and message are required.", false));
                 return;
             }
 
-            var recordedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
-            var messageId = BuildMessageId();
-            var chatMessage = new Notify.U2R.LobbyChatManagerMessage(
-                messageId,
-                data.SenderPlayerId,
-                data.SenderDisplayName,
-                data.MessageText,
-                "USER",
-                recordedAt);
-
-            _lobbyChatHandler?.MessageReceived(roomId, chatMessage);
-
-            onSuccess?.Invoke(new Acknowledge.U2R.LobbyChatManagerSubmitMessage(true, roomId, data.ClientMessageId, messageId, recordedAt));
-        }
-
-        public void R2U_MathManager_Add_REQ(
-            Request.R2U.MathAdd data,
-            Action<Acknowledge.U2R.MathAdd> onSuccess,
-            Action<string> onError)
-        {
-            if (data == null)
+            var senderPlayerId = data.Sender.PlayerId;
+            var senderNickname = string.IsNullOrWhiteSpace(data.Sender.PlayerNickname)
+                ? senderPlayerId
+                : data.Sender.PlayerNickname.Trim();
+            var messageText = data.Message.MessageText?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(senderPlayerId) || messageText.Length == 0)
             {
-                onError?.Invoke("request payload is null.");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", "sender.playerId and message.messageText are required.", false));
                 return;
             }
 
-            var sum = data.A + data.B;
-            onSuccess?.Invoke(new Acknowledge.U2R.MathAdd(true, sum));
+            var recordedAt = string.IsNullOrWhiteSpace(data.Message.CreatedAt)
+                ? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
+                : data.Message.CreatedAt;
+            var messageId = string.IsNullOrWhiteSpace(data.Message.MessageId)
+                ? BuildMessageId()
+                : data.Message.MessageId;
+            var localSync = VillagePlayerSync.LocalPlayer;
+            if (localSync != null)
+            {
+                localSync.PublishLobbyChat(
+                    roomId,
+                    senderPlayerId,
+                    senderNickname,
+                    messageText,
+                    messageId,
+                    recordedAt);
+            }
+            else
+            {
+                // Fallback path when no local network player is bound yet.
+                EmitLobbyChatMessageReceived(
+                    roomId,
+                    senderPlayerId,
+                    senderNickname,
+                    messageText,
+                    messageId,
+                    recordedAt);
+            }
+
+            var ackMessage = new ChatMessage(messageId, senderPlayerId, senderNickname, messageText, recordedAt);
+            onSuccess?.Invoke(new Acknowledge.U2R.LobbyChatManagerSubmitMessage(true, roomId, data.ClientMessageId, ackMessage));
         }
 
         private void StartRoomAsync(
             string roomId,
+            bool allowSessionCreation,
             Action<bool> onSuccess = null,
             Action<string> onError = null)
         {
-            StartRoomInternalAsync(roomId, onSuccess, onError);
+            StartRoomInternalAsync(roomId, allowSessionCreation, onSuccess, onError).Forget();
         }
 
-        private async void StartRoomInternalAsync(
+        private async UniTaskVoid StartRoomInternalAsync(
             string roomId,
+            bool allowSessionCreation,
             Action<bool> onSuccess,
             Action<string> onError)
         {
             if (playerSpawner == null)
             {
                 Debug.LogWarning("[LobbySceneBridgeAdapter] StartSession failed: PlayerSpawner is missing in LobbyScene.");
-                onError?.Invoke("PlayerSpawner is missing in LobbyScene.");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "PlayerSpawner is missing in LobbyScene.", true));
                 return;
             }
 
@@ -318,12 +360,21 @@ namespace Mimic.Gameplay
             {
                 Debug.Log($"[LobbySceneBridgeAdapter] StartSession roomId={roomId}");
                 playerSpawner.Configure(roomId, defaultPlayerPrefab, roomGameMode);
-                var success = await playerSpawner.StartOrJoinSessionAsync(roomId, roomGameMode, defaultPlayerPrefab);
+                var success = await playerSpawner.StartOrJoinSessionAsync(
+                    roomId,
+                    roomGameMode,
+                    defaultPlayerPrefab,
+                    allowSessionCreation,
+                    this.GetCancellationTokenOnDestroy());
                 if (success == false)
                 {
                     Debug.LogWarning($"[LobbySceneBridgeAdapter] StartSession failed roomId={roomId}");
                     _roomContext.ClearRuntimeReady(roomId);
-                    onError?.Invoke($"Failed to create/join session '{roomId}'.");
+                    onError?.Invoke(Util.ToBridgeError(
+                        allowSessionCreation ? "INTERNAL_ERROR" : "ROOM_NOT_FOUND",
+                        $"Failed to create/join session '{roomId}'.",
+                        allowSessionCreation,
+                        new { roomId }));
                     onSuccess?.Invoke(false);
                     return;
                 }
@@ -337,7 +388,11 @@ namespace Mimic.Gameplay
             {
                 Debug.LogError($"[LobbySceneBridgeAdapter] StartSession exception roomId={roomId} error={exception}");
                 _roomContext.ClearRuntimeReady(roomId);
-                onError?.Invoke(exception.Message);
+                onError?.Invoke(Util.ToBridgeError(
+                    "INTERNAL_ERROR",
+                    exception.Message,
+                    true,
+                    new { roomId }));
                 onSuccess?.Invoke(false);
             }
         }
@@ -423,6 +478,39 @@ namespace Mimic.Gameplay
         private static bool IsValidInviteCode(string inviteCode)
         {
             return string.IsNullOrWhiteSpace(inviteCode) == false && InviteCodePattern.IsMatch(inviteCode);
+        }
+
+        private void HandleNetworkLobbyChatMessage(VillagePlayerSync.LobbyChatNetworkMessage message)
+        {
+            if (string.IsNullOrWhiteSpace(message.RoomId))
+            {
+                return;
+            }
+
+            EmitLobbyChatMessageReceived(
+                message.RoomId,
+                message.SenderPlayerId,
+                message.SenderPlayerNickname,
+                message.MessageText,
+                message.MessageId,
+                message.CreatedAt);
+        }
+
+        private void EmitLobbyChatMessageReceived(
+            string roomId,
+            string senderPlayerId,
+            string senderNickname,
+            string messageText,
+            string messageId,
+            string createdAt)
+        {
+            var chatMessage = new ChatMessage(messageId, senderPlayerId, senderNickname, messageText, createdAt);
+
+            var history = _roomContext.GetOrCreateHistory(roomId);
+            history.Add(chatMessage);
+            _roomContext.TrimHistory(history);
+
+            _lobbyChatHandler?.MessageReceived(roomId, chatMessage);
         }
     }
 }

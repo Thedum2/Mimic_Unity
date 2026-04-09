@@ -16,7 +16,7 @@ namespace Mimic.Gameplay
         [SerializeField] private int maxPlayerCount = 5;
         [SerializeField] private string region = "KR";
         [SerializeField] private bool isPrivate = true;
-        [SerializeField] private string hostPlayerName = "host";
+        [SerializeField] private string hostPlayerNickname = "host";
 
         [Header("Join Room")]
         [SerializeField] private string inviteCode = "A1B2C";
@@ -27,13 +27,9 @@ namespace Mimic.Gameplay
 
         [Header("Lobby Chat")]
         [SerializeField] private string chatRoomId = "";
-        [SerializeField] private string senderDisplayName = "Host";
+        [SerializeField] private string senderPlayerNickname = "Host";
         [SerializeField] private string messageText = "Hello lobby";
         [SerializeField] private string clientMessageId = "client_msg_001";
-
-        [Header("Math Sample (3+2=5)")]
-        [SerializeField] private int mathA = 3;
-        [SerializeField] private int mathB = 2;
 
         [ContextMenu("Debug/Send CreateRoom REQ")]
         public void SendCreateRoomRequest()
@@ -42,8 +38,12 @@ namespace Mimic.Gameplay
                 "MatchManager_CreateRoom",
                 new
                 {
-                    hostPlayerId = playerId,
-                    hostPlayerName,
+                    hostPlayer = new
+                    {
+                        playerId,
+                        playerNickname = hostPlayerNickname,
+                        isHost = true
+                    },
                     roomCode,
                     maxPlayerCount,
                     region,
@@ -58,7 +58,11 @@ namespace Mimic.Gameplay
                 "MatchManager_JoinRoomByInviteCode",
                 new
                 {
-                    playerId,
+                    player = new
+                    {
+                        playerId,
+                        playerNickname = hostPlayerNickname
+                    },
                     inviteCode
                 });
         }
@@ -70,7 +74,11 @@ namespace Mimic.Gameplay
                 "MatchManager_RejoinRoom",
                 new
                 {
-                    playerId,
+                    player = new
+                    {
+                        playerId,
+                        playerNickname = hostPlayerNickname
+                    },
                     roomId = rejoinRoomId,
                     sessionId = rejoinSessionId
                 });
@@ -84,21 +92,21 @@ namespace Mimic.Gameplay
                 new
                 {
                     roomId = chatRoomId,
-                    senderPlayerId = playerId,
-                    messageText,
+                    sender = new
+                    {
+                        playerId,
+                        playerNickname = senderPlayerNickname,
+                        isHost = false
+                    },
+                    message = new
+                    {
+                        senderPlayerId = playerId,
+                        senderPlayerNickname = senderPlayerNickname,
+                        messageText,
+                        messageId = clientMessageId,
+                        createdAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
+                    },
                     clientMessageId
-                });
-        }
-
-        [ContextMenu("Debug/Send Math Add REQ")]
-        public void SendMathAddRequest()
-        {
-            SendRequest(
-                "MathManager_Add",
-                new
-                {
-                    a = mathA,
-                    b = mathB
                 });
         }
 

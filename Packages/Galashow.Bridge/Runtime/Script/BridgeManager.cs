@@ -67,7 +67,6 @@ namespace Mimic.Bridge
         private void RegisterDefaultHandlers()
         {
             RegisterHandler(_mainHandler.MatchHandler);
-            RegisterHandler(_mainHandler.MathHandler);
             RegisterHandler(_mainHandler.LobbyChatHandler);
         }
 
@@ -95,7 +94,7 @@ namespace Mimic.Bridge
             }
             catch (Exception e)
             {
-                GLog.Error($"[Bridge] Parse error: {e.Message}");
+                GLog.Error($"[Bridge] Parse error: {e.Message}\nPayload: {jsonMessage}\n{e}");
             }
         }
 
@@ -136,13 +135,14 @@ namespace Mimic.Bridge
                             : NormalizeRouteForMessage(response.Route);
                         SendAcknowledge(message.id, acknowledgeRoute, true, response?.Data);
                     },
-                    onError: error => SendAcknowledge(message.id, routeForResponse, false, new { error })
+                    onError: error => SendAcknowledge(message.id, routeForResponse, false, BuildErrorAcknowledgePayload(routeForResponse, error))
                 );
             }
             else
             {
                 GLog.Warn($"[Bridge] No handler for route: {message.route}");
-                SendAcknowledge(message.id, routeForResponse, false, new { error = "No handler registered" });
+                var error = Util.ToBridgeError("NOT_INITIALIZED", "No handler registered.", true, new { route = routeForResponse });
+                SendAcknowledge(message.id, routeForResponse, false, BuildErrorAcknowledgePayload(routeForResponse, error));
             }
         }
 
@@ -168,6 +168,18 @@ namespace Mimic.Bridge
 
         private void HandleNotify(string route, Message message)
         {
+            // Accept lobby chat submit as R2U NTY as well, and respond via ACK.
+            if (string.Equals(message.from, ReactEndpoint, StringComparison.Ordinal))
+            {
+                var (_, action) = Util.ParseRoute(message.route);
+                if (string.Equals(route, "LobbyChatManager", StringComparison.Ordinal) &&
+                    string.Equals(action, "SubmitMessage", StringComparison.Ordinal))
+                {
+                    HandleRequest(route, message);
+                    return;
+                }
+            }
+
             if (_messageHandlers.TryGetValue(route, out var handler))
             {
                 handler.HandleNotify(message);
@@ -216,6 +228,72 @@ namespace Mimic.Bridge
         {
             var message = CreateMessage(MessageType.ACK, MessageDirection.U2R, route, data, success, requestId);
             SendMessageToReactInternal(message);
+        }
+
+        private static ErrorAcknowledgePayload BuildErrorAcknowledgePayload(string route, string rawError)
+        {
+            if (Util.TryParseBridgeError(rawError, out var parsedError))
+            {
+                return new ErrorAcknowledgePayload(parsedError);
+            }
+
+            var normalizedError = string.IsNullOrWhiteSpace(rawError)
+                ? "Unknown bridge error."
+                : rawError.Trim();
+            var lower = normalizedError.ToLowerInvariant();
+
+            var code = "INTERNAL_ERROR";
+            var retryable = true;
+
+            if (lower.Contains("required") ||
+                lower.Contains("invalid") ||
+                lower.Contains("must be") ||
+                lower.Contains("bad payload"))
+            {
+                code = "INVALID_ARGUMENT";
+                retryable = false;
+            }
+            else if (lower.Contains("room is full"))
+            {
+                code = "ROOM_FULL";
+                retryable = false;
+            }
+            else if (lower.Contains("room not found"))
+            {
+                code = "ROOM_NOT_FOUND";
+                retryable = false;
+            }
+            else if (lower.Contains("runtimeready") || lower.Contains("runtime not ready"))
+            {
+                code = "RUNTIME_NOT_READY";
+                retryable = true;
+            }
+            else if ((lower.Contains("no i") && lower.Contains("registered")) ||
+                     lower.Contains("missing in lobbyscene") ||
+                     lower.Contains("not initialized"))
+            {
+                code = "NOT_INITIALIZED";
+                retryable = true;
+            }
+            else if (lower.Contains("timeout"))
+            {
+                code = "TIMEOUT";
+                retryable = true;
+            }
+            else if ((route == "MatchManager_JoinRoomByInviteCode" || route == "MatchManager_RejoinRoom") &&
+                     (lower.Contains("failed to join session") || lower.Contains("failed to rejoin session")))
+            {
+                code = "ROOM_NOT_FOUND";
+                retryable = false;
+            }
+
+            return new ErrorAcknowledgePayload(new BridgeErrorPayload
+            {
+                code = code,
+                message = normalizedError,
+                retryable = retryable,
+                details = new { route }
+            });
         }
 
         private void SendMessageToReactInternal(Message message)
