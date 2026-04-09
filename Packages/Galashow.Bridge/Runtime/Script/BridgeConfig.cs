@@ -43,6 +43,28 @@ namespace Mimic.Bridge
     }
 
     [Serializable]
+    public sealed class BridgeErrorPayload
+    {
+        public string code;
+        public string message;
+        public bool retryable;
+        public object details;
+    }
+
+    [Serializable]
+    public sealed class ErrorAcknowledgePayload
+    {
+        public bool result;
+        public BridgeErrorPayload error;
+
+        public ErrorAcknowledgePayload(BridgeErrorPayload errorPayload)
+        {
+            result = false;
+            error = errorPayload;
+        }
+    }
+
+    [Serializable]
     public class PendingRequest
     {
         public string requestId;

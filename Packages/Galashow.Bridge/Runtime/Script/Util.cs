@@ -1,10 +1,55 @@
 using System;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace Mimic.Bridge
 {
     public static class Util
     {
+        public static string ToBridgeError(
+            string code,
+            string message,
+            bool retryable = false,
+            object details = null)
+        {
+            var payload = new BridgeErrorPayload
+            {
+                code = string.IsNullOrWhiteSpace(code) ? "INTERNAL_ERROR" : code,
+                message = string.IsNullOrWhiteSpace(message) ? "Unknown bridge error." : message,
+                retryable = retryable,
+                details = details
+            };
+
+            return JsonConvert.SerializeObject(payload);
+        }
+
+        public static bool TryParseBridgeError(string raw, out BridgeErrorPayload payload)
+        {
+            payload = null;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            try
+            {
+                var parsed = JsonConvert.DeserializeObject<BridgeErrorPayload>(raw);
+                if (parsed == null ||
+                    string.IsNullOrWhiteSpace(parsed.code) ||
+                    string.IsNullOrWhiteSpace(parsed.message))
+                {
+                    return false;
+                }
+
+                payload = parsed;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public static (string routeName, string action) ParseRoute(string route)
         {
             if (string.IsNullOrWhiteSpace(route))

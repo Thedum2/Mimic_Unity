@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using System.Collections.Generic;
 
 namespace Mimic.Bridge.Model
 {
@@ -11,12 +12,21 @@ namespace Mimic.Bridge.Model
                 [JsonProperty("result")] public bool Result { get; set; }
                 [JsonProperty("roomId")] public string RoomId { get; set; }
                 [JsonProperty("inviteCode")] public string InviteCode { get; set; }
+                [JsonProperty("joinedPlayerCount")] public int JoinedPlayerCount { get; set; }
+                [JsonProperty("participants")] public List<PlayerBase> Participants { get; set; }
 
-                public MatchManagerCreateRoom(bool result, string roomId, string inviteCode)
+                public MatchManagerCreateRoom(
+                    bool result,
+                    string roomId,
+                    string inviteCode,
+                    int joinedPlayerCount,
+                    List<PlayerBase> participants)
                 {
                     Result = result;
                     RoomId = roomId;
                     InviteCode = inviteCode;
+                    JoinedPlayerCount = joinedPlayerCount;
+                    Participants = participants ?? new List<PlayerBase>();
                 }
             }
 
@@ -25,12 +35,18 @@ namespace Mimic.Bridge.Model
                 [JsonProperty("result")] public bool Result { get; set; }
                 [JsonProperty("roomId")] public string RoomId { get; set; }
                 [JsonProperty("joinedPlayerCount")] public int JoinedPlayerCount { get; set; }
+                [JsonProperty("participants")] public List<PlayerBase> Participants { get; set; }
 
-                public MatchManagerJoinRoomByInviteCode(bool result, string roomId, int joinedPlayerCount)
+                public MatchManagerJoinRoomByInviteCode(
+                    bool result,
+                    string roomId,
+                    int joinedPlayerCount,
+                    List<PlayerBase> participants)
                 {
                     Result = result;
                     RoomId = roomId;
                     JoinedPlayerCount = joinedPlayerCount;
+                    Participants = participants ?? new List<PlayerBase>();
                 }
             }
 
@@ -69,35 +85,21 @@ namespace Mimic.Bridge.Model
                 [JsonProperty("result")] public bool Result { get; set; }
                 [JsonProperty("roomId")] public string RoomId { get; set; }
                 [JsonProperty("clientMessageId")] public string ClientMessageId { get; set; }
-                [JsonProperty("messageId")] public string MessageId { get; set; }
-                [JsonProperty("recordedAt")] public string RecordedAt { get; set; }
+                [JsonProperty("message")] public ChatMessage Message { get; set; }
 
                 public LobbyChatManagerSubmitMessage(
                     bool result,
                     string roomId,
                     string clientMessageId,
-                    string messageId,
-                    string recordedAt)
+                    ChatMessage message)
                 {
                     Result = result;
                     RoomId = roomId;
                     ClientMessageId = clientMessageId;
-                    MessageId = messageId;
-                    RecordedAt = recordedAt;
+                    Message = message;
                 }
             }
 
-            public class MathAdd
-            {
-                [JsonProperty("result")] public bool Result { get; set; }
-                [JsonProperty("sum")] public int Sum { get; set; }
-
-                public MathAdd(bool result, int sum)
-                {
-                    Result = result;
-                    Sum = sum;
-                }
-            }
         }
     }
 }

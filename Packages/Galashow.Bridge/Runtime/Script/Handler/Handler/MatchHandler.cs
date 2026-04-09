@@ -52,7 +52,7 @@ namespace Mimic.Bridge
                     HandleRejoinRoom(message, onSuccess, onError);
                     break;
                 default:
-                    onError?.Invoke($"[MatchHandler] Unknown REQ action '{action}'");
+                    onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", $"[MatchHandler] Unknown REQ action '{action}'", false));
                     break;
             }
         }
@@ -67,13 +67,13 @@ namespace Mimic.Bridge
         {
             if (!Util.TryTo<Request.R2U.MatchManagerCreateRoom>(message.data, out var request, out var error))
             {
-                onError?.Invoke($"bad payload: {error}");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", $"bad payload: {error}", false));
                 return;
             }
 
             if (_port == null)
             {
-                onError?.Invoke("No IMatchPort registered");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "No IMatchPort registered", true));
                 return;
             }
 
@@ -84,13 +84,13 @@ namespace Mimic.Bridge
         {
             if (!Util.TryTo<Request.R2U.MatchManagerJoinRoomByInviteCode>(message.data, out var request, out var error))
             {
-                onError?.Invoke($"bad payload: {error}");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", $"bad payload: {error}", false));
                 return;
             }
 
             if (_port == null)
             {
-                onError?.Invoke("No IMatchPort registered");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "No IMatchPort registered", true));
                 return;
             }
 
@@ -101,13 +101,13 @@ namespace Mimic.Bridge
         {
             if (!Util.TryTo<Request.R2U.MatchManagerRejoinRoom>(message.data, out var request, out var error))
             {
-                onError?.Invoke($"bad payload: {error}");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", $"bad payload: {error}", false));
                 return;
             }
 
             if (_port == null)
             {
-                onError?.Invoke("No IMatchPort registered");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "No IMatchPort registered", true));
                 return;
             }
 

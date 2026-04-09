@@ -22,7 +22,7 @@ namespace Mimic.Bridge
             }
         }
 
-        public void MessageReceived(string roomId, Notify.U2R.LobbyChatManagerMessage message)
+        public void MessageReceived(string roomId, ChatMessage message)
         {
             NTY("MessageReceived", new Notify.U2R.LobbyChatManagerMessageReceived(roomId, message));
         }
@@ -36,7 +36,7 @@ namespace Mimic.Bridge
                     HandleSubmitMessage(message, onSuccess, onError);
                     break;
                 default:
-                    onError?.Invoke($"[LobbyChatHandler] Unknown REQ action '{action}'");
+                    onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", $"[LobbyChatHandler] Unknown REQ action '{action}'", false));
                     break;
             }
         }
@@ -51,13 +51,13 @@ namespace Mimic.Bridge
         {
             if (!Util.TryTo<Request.R2U.LobbyChatManagerSubmitMessage>(message.data, out var request, out var error))
             {
-                onError?.Invoke($"bad payload: {error}");
+                onError?.Invoke(Util.ToBridgeError("INVALID_ARGUMENT", $"bad payload: {error}", false));
                 return;
             }
 
             if (_port == null)
             {
-                onError?.Invoke("No ILobbyChatPort registered");
+                onError?.Invoke(Util.ToBridgeError("NOT_INITIALIZED", "No ILobbyChatPort registered", true));
                 return;
             }
 
