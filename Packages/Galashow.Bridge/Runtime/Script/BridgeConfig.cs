@@ -22,10 +22,12 @@ namespace Mimic.Bridge
     {
         public bool ok;
         public string type;
+        public string from;
+        public string to;
         public string route;
         public string id;
         public object data;
-        public string timestamp;
+        public long timestamp;
     }
 
     public sealed class AcknowledgeResponse
@@ -44,6 +46,7 @@ namespace Mimic.Bridge
     public class PendingRequest
     {
         public string requestId;
+        public string route;
         public DateTime sentTime;
         public float timeoutSeconds;
         public Action<Message> onSuccess;

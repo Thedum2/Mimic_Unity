@@ -16,6 +16,7 @@ namespace Mimic.Gameplay
         [SerializeField] private int maxPlayerCount = 5;
         [SerializeField] private string region = "KR";
         [SerializeField] private bool isPrivate = true;
+        [SerializeField] private string hostPlayerName = "host";
 
         [Header("Join Room")]
         [SerializeField] private string inviteCode = "A1B2C";
@@ -30,6 +31,10 @@ namespace Mimic.Gameplay
         [SerializeField] private string messageText = "Hello lobby";
         [SerializeField] private string clientMessageId = "client_msg_001";
 
+        [Header("Math Sample (3+2=5)")]
+        [SerializeField] private int mathA = 3;
+        [SerializeField] private int mathB = 2;
+
         [ContextMenu("Debug/Send CreateRoom REQ")]
         public void SendCreateRoomRequest()
         {
@@ -37,7 +42,8 @@ namespace Mimic.Gameplay
                 "MatchManager_CreateRoom",
                 new
                 {
-                    playerId,
+                    hostPlayerId = playerId,
+                    hostPlayerName,
                     roomCode,
                     maxPlayerCount,
                     region,
@@ -84,16 +90,30 @@ namespace Mimic.Gameplay
                 });
         }
 
+        [ContextMenu("Debug/Send Math Add REQ")]
+        public void SendMathAddRequest()
+        {
+            SendRequest(
+                "MathManager_Add",
+                new
+                {
+                    a = mathA,
+                    b = mathB
+                });
+        }
+
         private void SendRequest(string route, object data)
         {
             var payload = new DebugBridgeMessage
             {
                 ok = true,
                 type = "REQ",
+                from = "R",
+                to = "U",
                 route = route,
-                id = $"debug_{Guid.NewGuid():N}",
+                id = Guid.NewGuid().ToString(),
                 data = data,
-                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             };
 
             var json = JsonConvert.SerializeObject(payload);
@@ -105,10 +125,12 @@ namespace Mimic.Gameplay
         {
             public bool ok;
             public string type;
+            public string from;
+            public string to;
             public string route;
             public string id;
             public object data;
-            public string timestamp;
+            public long timestamp;
         }
     }
 }

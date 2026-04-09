@@ -86,6 +86,18 @@ namespace Mimic.Bridge.Model
                     RecordedAt = recordedAt;
                 }
             }
+
+            public class MathAdd
+            {
+                [JsonProperty("result")] public bool Result { get; set; }
+                [JsonProperty("sum")] public int Sum { get; set; }
+
+                public MathAdd(bool result, int sum)
+                {
+                    Result = result;
+                    Sum = sum;
+                }
+            }
         }
     }
 }

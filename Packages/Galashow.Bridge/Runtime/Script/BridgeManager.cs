@@ -11,12 +11,15 @@ namespace Mimic.Bridge
     [DefaultExecutionOrder(-5001)]
     public class BridgeManager : PersistentMonoSingleton<BridgeManager>
     {
+        private const string ReactEndpoint = "R";
+        private const string UnityEndpoint = "U";
         [Header("Settings")]
-        [SerializeField] private float defaultTimeoutSeconds = 10f;
+        [SerializeField] private float defaultTimeoutSeconds = 5f;
         [SerializeField] private string bridgeGameObjectName = "BridgeManager";
 
         private readonly Dictionary<string, IMessageHandler> _messageHandlers = new();
         private readonly Dictionary<string, PendingRequest> _pendingRequests = new();
+        private readonly Dictionary<string, Queue<PendingRequest>> _pendingRequestsByRoute = new();
 
         public static Action<Message> OnMessageReceived;
         public static Action<Message> OnMessageSent;
@@ -64,10 +67,8 @@ namespace Mimic.Bridge
         private void RegisterDefaultHandlers()
         {
             RegisterHandler(_mainHandler.MatchHandler);
-            RegisterHandler(_mainHandler.RoundHandler);
-            RegisterHandler(_mainHandler.ConversationHandler);
+            RegisterHandler(_mainHandler.MathHandler);
             RegisterHandler(_mainHandler.LobbyChatHandler);
-            RegisterHandler(_mainHandler.PlayerHandler);
         }
 
         public void ReceiveMessage(string jsonMessage)
@@ -100,6 +101,7 @@ namespace Mimic.Bridge
 
         private void HandleIncomingMessage(Message message)
         {
+            NormalizeBridgeDirection(message);
             var (routeName, _) = Util.ParseRoute(message.route);
             OnMessageReceived?.Invoke(message);
 
@@ -122,28 +124,32 @@ namespace Mimic.Bridge
 
         private void HandleRequest(string route, Message message)
         {
+            var routeForResponse = NormalizeRouteForMessage(message.route);
             if (_messageHandlers.TryGetValue(route, out var handler))
             {
                 handler.HandleRequest(
                     message,
                     onSuccess: response =>
                     {
-                        var acknowledgeRoute = string.IsNullOrEmpty(response?.Route) ? message.route : response.Route;
+                        var acknowledgeRoute = string.IsNullOrEmpty(response?.Route)
+                            ? routeForResponse
+                            : NormalizeRouteForMessage(response.Route);
                         SendAcknowledge(message.id, acknowledgeRoute, true, response?.Data);
                     },
-                    onError: error => SendAcknowledge(message.id, message.route, false, new { error })
+                    onError: error => SendAcknowledge(message.id, routeForResponse, false, new { error })
                 );
             }
             else
             {
                 GLog.Warn($"[Bridge] No handler for route: {message.route}");
-                SendAcknowledge(message.id, message.route, false, new { error = "No handler registered" });
+                SendAcknowledge(message.id, routeForResponse, false, new { error = "No handler registered" });
             }
         }
 
         private void HandleAcknowledge(Message message)
         {
-            if (_pendingRequests.Remove(message.id, out var pending))
+            var route = message.route;
+            if (TryResolvePendingRequest(message.id, route, out var pending))
             {
                 if (message.ok)
                 {
@@ -188,12 +194,14 @@ namespace Mimic.Bridge
             _pendingRequests[message.id] = new PendingRequest
             {
                 requestId = message.id,
+                route = NormalizeRouteForMessage(route),
                 sentTime = DateTime.UtcNow,
                 timeoutSeconds = timeoutSeconds,
                 onSuccess = onSuccess,
                 onError = onError,
                 onTimeout = onTimeout
             };
+            EnqueuePendingRequest(_pendingRequests[message.id]);
 
             SendMessageToReactInternal(message);
         }
@@ -229,24 +237,24 @@ namespace Mimic.Bridge
 
         private Message CreateMessage(MessageType type, MessageDirection direction, string route, object data, bool ok, string customId = null)
         {
+            var normalizedRoute = NormalizeRouteForMessage(route);
+            var (from, to) = GetEnvelopeDirection(direction);
             return new Message
             {
                 ok = ok,
                 type = type.ToString(),
-                route = route,
+                from = from,
+                to = to,
+                route = normalizedRoute,
                 id = customId ?? GenerateMessageId(direction),
                 data = data,
-                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString()
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
             };
         }
 
         private string GenerateMessageId(MessageDirection direction)
         {
-            var prefix = direction == MessageDirection.U2R ? "u2r" : "r2u";
-            var uuid = Guid.NewGuid().ToString();
-            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var currentId = _idIndex++;
-            return $"{prefix}_{uuid}_{timestamp}_{currentId}";
+            return Guid.NewGuid().ToString();
         }
 
         private IEnumerator CheckTimeouts()
@@ -261,6 +269,7 @@ namespace Mimic.Bridge
                 {
                     if (_pendingRequests.Remove(expired.requestId, out _))
                     {
+                        RemovePendingRequestByRoute(expired);
                         expired.onTimeout?.Invoke();
                         GLog.Warn($"[Bridge] Request timeout: {expired.requestId}");
                     }
@@ -288,6 +297,7 @@ namespace Mimic.Bridge
         {
             var requests = _pendingRequests.Values.ToList();
             _pendingRequests.Clear();
+            _pendingRequestsByRoute.Clear();
             foreach (var request in requests)
             {
                 request.onTimeout?.Invoke();
@@ -298,7 +308,140 @@ namespace Mimic.Bridge
         {
             _messageHandlers.Clear();
             _pendingRequests.Clear();
+            _pendingRequestsByRoute.Clear();
             StopAllCoroutines();
+        }
+
+        private void NormalizeBridgeDirection(Message message)
+        {
+            if (string.IsNullOrWhiteSpace(message.type))
+            {
+                return;
+            }
+
+            var type = message.type.ToUpperInvariant();
+            var expectedFrom = type == "REQ" ? ReactEndpoint : type is "ACK" or "NTY" ? UnityEndpoint : string.Empty;
+            var expectedTo = type == "REQ" ? UnityEndpoint : type is "ACK" or "NTY" ? ReactEndpoint : string.Empty;
+
+            if (string.IsNullOrWhiteSpace(message.from))
+            {
+                message.from = expectedFrom;
+            }
+
+            if (string.IsNullOrWhiteSpace(message.to))
+            {
+                message.to = expectedTo;
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedFrom) &&
+                !string.Equals(message.from, expectedFrom, StringComparison.Ordinal))
+            {
+                GLog.Warn($"[Bridge] Unexpected sender '{message.from}' for type '{type}'. Expected '{expectedFrom}'.");
+            }
+        }
+
+        private bool TryResolvePendingRequest(string requestId, string route, out PendingRequest pending)
+        {
+            if (!string.IsNullOrWhiteSpace(requestId) && _pendingRequests.Remove(requestId, out pending))
+            {
+                RemovePendingRequestByRoute(pending);
+                return true;
+            }
+
+            pending = TryDequeuePendingByRoute(route);
+            return pending != null;
+        }
+
+        private PendingRequest TryDequeuePendingByRoute(string route)
+        {
+            if (string.IsNullOrWhiteSpace(route))
+            {
+                return null;
+            }
+
+            var normalizedRoute = NormalizeRouteForMessage(route);
+            if (_pendingRequestsByRoute.TryGetValue(normalizedRoute, out var queue) == false || queue.Count == 0)
+            {
+                return null;
+            }
+
+            var pending = queue.Dequeue();
+            if (pending is not null)
+            {
+                _pendingRequests.Remove(pending.requestId, out _);
+            }
+
+            if (queue.Count == 0)
+            {
+                _pendingRequestsByRoute.Remove(normalizedRoute);
+            }
+
+            return pending;
+        }
+
+        private void EnqueuePendingRequest(PendingRequest pending)
+        {
+            if (pending == null || string.IsNullOrWhiteSpace(pending.route))
+            {
+                return;
+            }
+
+            if (_pendingRequestsByRoute.TryGetValue(pending.route, out var queue))
+            {
+                queue.Enqueue(pending);
+                return;
+            }
+
+            _pendingRequestsByRoute[pending.route] = new Queue<PendingRequest>(new[] { pending });
+        }
+
+        private void RemovePendingRequestByRoute(PendingRequest pending)
+        {
+            if (pending == null || string.IsNullOrWhiteSpace(pending.route))
+            {
+                return;
+            }
+
+            if (_pendingRequestsByRoute.TryGetValue(pending.route, out var queue) == false || queue.Count == 0)
+            {
+                return;
+            }
+
+            var normalizedRoute = NormalizeRouteForMessage(pending.route);
+            var remain = queue.Where(request => request.requestId != pending.requestId).ToList();
+            if (remain.Count == 0)
+            {
+                _pendingRequestsByRoute.Remove(normalizedRoute);
+                return;
+            }
+
+            _pendingRequestsByRoute[normalizedRoute] = new Queue<PendingRequest>(remain);
+        }
+
+        private string NormalizeRouteForMessage(string route)
+        {
+            var (manager, action) = Util.ParseRoute(route);
+            if (string.IsNullOrWhiteSpace(manager))
+            {
+                return string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(action))
+            {
+                return manager;
+            }
+
+            return $"{manager}_{action}";
+        }
+
+        private static (string from, string to) GetEnvelopeDirection(MessageDirection direction)
+        {
+            return direction switch
+            {
+                MessageDirection.U2R => (UnityEndpoint, ReactEndpoint),
+                MessageDirection.R2U => (ReactEndpoint, UnityEndpoint),
+                _ => (string.Empty, string.Empty)
+            };
         }
 
         private sealed class BridgeSender : IBridgeSender

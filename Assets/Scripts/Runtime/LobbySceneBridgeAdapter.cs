@@ -10,7 +10,7 @@ using UnityEngine.SceneManagement;
 namespace Mimic.Gameplay
 {
     [DisallowMultipleComponent]
-    public sealed class LobbySceneBridgeAdapter : MonoBehaviour, IMatchPort, ILobbyChatPort
+    public sealed class LobbySceneBridgeAdapter : MonoBehaviour, IMatchPort, ILobbyChatPort, IMathPort
     {
         private const int DefaultMaxMessageHistory = 60;
         private static readonly Regex InviteCodePattern = new("^[A-Z0-9]{5}$", RegexOptions.Compiled);
@@ -23,6 +23,7 @@ namespace Mimic.Gameplay
 
         private MatchHandler _matchHandler;
         private LobbyChatHandler _lobbyChatHandler;
+        private MathHandler _mathHandler;
         private LobbyRoomContext _roomContext;
         private string _currentRoomId;
         private bool _initialRuntimeReadySent;
@@ -68,14 +69,17 @@ namespace Mimic.Gameplay
             var bridge = BridgeManager.Instance;
             _matchHandler = bridge.GetHandler<MatchHandler>("MatchManager");
             _lobbyChatHandler = bridge.GetHandler<LobbyChatHandler>("LobbyChatManager");
+            _mathHandler = bridge.GetHandler<MathHandler>("MathManager");
             _matchHandler?.BindPort(this);
             _lobbyChatHandler?.BindPort(this);
+            _mathHandler?.BindPort(this);
         }
 
         private void UnbindHandlers()
         {
             _matchHandler?.ClearPort(this);
             _lobbyChatHandler?.ClearPort(this);
+            _mathHandler?.ClearPort(this);
         }
 
         public void R2U_MatchManager_CreateRoom_REQ(
@@ -270,13 +274,24 @@ namespace Mimic.Gameplay
                 "USER",
                 recordedAt);
 
-            var history = _roomContext.GetOrCreateHistory(roomId);
-            history.Add(chatMessage);
-            _roomContext.TrimHistory(history);
             _lobbyChatHandler?.MessageReceived(roomId, chatMessage);
-            _lobbyChatHandler?.HistoryUpdated(roomId, history);
 
             onSuccess?.Invoke(new Acknowledge.U2R.LobbyChatManagerSubmitMessage(true, roomId, data.ClientMessageId, messageId, recordedAt));
+        }
+
+        public void R2U_MathManager_Add_REQ(
+            Request.R2U.MathAdd data,
+            Action<Acknowledge.U2R.MathAdd> onSuccess,
+            Action<string> onError)
+        {
+            if (data == null)
+            {
+                onError?.Invoke("request payload is null.");
+                return;
+            }
+
+            var sum = data.A + data.B;
+            onSuccess?.Invoke(new Acknowledge.U2R.MathAdd(true, sum));
         }
 
         private void StartRoomAsync(
@@ -314,12 +329,6 @@ namespace Mimic.Gameplay
                 }
 
                 Debug.Log($"[LobbySceneBridgeAdapter] StartSession success roomId={roomId}");
-
-                if (emitRuntimeReady && _matchHandler != null)
-                {
-                    Debug.Log($"[LobbySceneBridgeAdapter] Notify RuntimeReady roomId={roomId}");
-                    SendRuntimeReady(roomId);
-                }
 
                 _roomContext.SetRuntimeReady(roomId);
                 onSuccess?.Invoke(true);
