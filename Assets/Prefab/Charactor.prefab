@@ -305,6 +305,7 @@ GameObject:
   - component: {fileID: 5350407949521511130}
   - component: {fileID: 1113388645327573626}
   - component: {fileID: 2630371999372571165}
+  - component: {fileID: 2163475189284211015}
   m_Layer: 0
   m_Name: Charactor
   m_TagString: Untagged
@@ -431,6 +432,7 @@ MonoBehaviour:
   mouseButtonForMove: 0
   clickEffectPrefab: {fileID: 0}
   clickEffectDuration: 1
+  clickEffectFadeDuration: 0.25
   clickEffectScale: 1
   useFallbackClickMarker: 1
   clickEffectColor: {r: 1, g: 0.92156863, b: 0.015686275, a: 1}
@@ -473,6 +475,23 @@ MonoBehaviour:
   NetworkedBehaviours:
   - {fileID: 1113388645327573626}
   ForceRemoteRenderTimeframe: 0
+--- !u!114 &2163475189284211015
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 498253721416304272}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 92c9d57968ac4c6fb77babad4091b008, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  nameOffset: {x: 0, y: 0.9, z: 0}
+  labelScale: 0.05
+  labelFontSize: 30
+  labelColor: {r: 0.8018868, g: 0.8018868, b: 0.8018868, a: 1}
+  fallbackFontAsset: {fileID: 0}
 --- !u!1 &498253721421649741
 GameObject:
   m_ObjectHideFlags: 0
