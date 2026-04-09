@@ -1,0 +1,16 @@
+{
+  "name": "Mimic.Bridge",
+  "rootNamespace": "Mimic.Bridge",
+  "references": [
+    "Mimic.Core"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
