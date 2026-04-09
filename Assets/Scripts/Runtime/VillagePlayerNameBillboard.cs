@@ -101,7 +101,7 @@ public sealed class VillagePlayerNameBillboard : MonoBehaviour
         var sourceFont = fallbackFontAsset;
         if (sourceFont == null)
         {
-            sourceFont = TMP_Settings.instance != null ? TMP_Settings.instance.defaultFontAsset : null;
+            sourceFont = TMP_Settings.defaultFontAsset;
         }
 
         if (sourceFont != null)
